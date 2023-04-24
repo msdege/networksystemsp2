@@ -37,6 +37,7 @@ class StudentSocketImpl extends BaseSocketImpl {
     TCPPacket SYNpkt = new TCPPacket(port, localport,0, 0, false, true, false, 0, null);
     TCPWrapper.send(SYNpkt, address);
 
+    System.out.println("Client connect call\n");
     state = "SYN_SENT";
 
   }
@@ -49,7 +50,9 @@ class StudentSocketImpl extends BaseSocketImpl {
    *  Add the case statement for LISTEN and have it send a SYN+ACK when it receives a SYN. 
    */
   public synchronized void receivePacket(TCPPacket p){
+    System.out.println("pkt received\n");
   	System.out.println(p.toString());
+    
     int seqNum;
     int ackNum;
 
@@ -63,6 +66,15 @@ class StudentSocketImpl extends BaseSocketImpl {
         ackNum = p.seqNum + 1;
 
         if (p.synFlag && !p.ackFlag) {
+          
+          try {
+            D.unregisterListeningSocket(localport, this);
+            D.registerConnection(p.sourceAddr, localport, port, this);
+          }
+          catch (Exception e) {
+            System.out.println(e);
+          }
+
           TCPPacket SYNACKpkt = new TCPPacket(port, localport,seqNum, ackNum, true, true, false, 0, null);
           TCPWrapper.send(SYNACKpkt, address);
 
@@ -89,14 +101,6 @@ class StudentSocketImpl extends BaseSocketImpl {
       case "SYN_RCVD":
         System.out.println("Current state: "+state+"\n");
 
-        try {
-          D.unregisterListeningSocket(localport, this);
-          D.registerConnection(p.sourceAddr, localport, port, this);
-        }
-        catch (Exception e) {
-          System.out.println(e);
-        }
-
         if (p.ackFlag && !p.synFlag){
           state="Established";
         }
@@ -117,6 +121,7 @@ class StudentSocketImpl extends BaseSocketImpl {
    */
   public synchronized void acceptConnection() throws IOException {
     state = "Listen";
+    System.out.println("Server acceptConnection(). In listening state.\n");
 
     D.registerListeningSocket(localport, this);
   }
