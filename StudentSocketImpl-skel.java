@@ -11,9 +11,8 @@ class StudentSocketImpl extends BaseSocketImpl {
 
   private Demultiplexer D;
   private Timer tcpTimer;
-  
-  private boolean clientConnecting = false;
-  private boolean serverConnecting = false;
+
+  private String state = "Closed";
 
 
   StudentSocketImpl(Demultiplexer D) {  // default constructor
@@ -33,25 +32,83 @@ class StudentSocketImpl extends BaseSocketImpl {
     this.address = address;
     this.port = port;
 
-    clientConnecting = true;
-
     D.registerConnection(address, localport, port,this);
 
     TCPPacket SYNpkt = new TCPPacket(port, localport,0, 0, false, true, false, 0, null);
-
     TCPWrapper.send(SYNpkt, address);
+
+    state = "SYN_SENT";
 
   }
   
   /**
    * Called by Demultiplexer when a packet comes in for this connection
    * @param p The packet that arrived
+   * 
+   *  receivePacket() is going to be one big switch statement on the state of the connection. 
+   *  Add the case statement for LISTEN and have it send a SYN+ACK when it receives a SYN. 
    */
   public synchronized void receivePacket(TCPPacket p){
   	System.out.println(p.toString());
+    int seqNum;
+    int ackNum;
+
+    this.notifyAll();
+
+    switch (state) {
+      case "Listen":
+        System.out.println("Current state: "+state+"\n");
+
+        seqNum = p.ackNum;
+        ackNum = p.seqNum + 1;
+
+        if (p.synFlag && !p.ackFlag) {
+          TCPPacket SYNACKpkt = new TCPPacket(port, localport,seqNum, ackNum, true, true, false, 0, null);
+          TCPWrapper.send(SYNACKpkt, address);
+
+          state="SYN_RCVD";
+        }
+
+        break;
+    
+      case "SYN_SENT":
+        System.out.println("Current state: "+state+"\n");
+
+        seqNum = p.ackNum;
+        ackNum = p.seqNum + 1;
+
+        if (p.ackFlag && p.synFlag){
+          TCPPacket ACKpkt = new TCPPacket(port, localport,seqNum, ackNum, true, false, false, 0, null);
+          TCPWrapper.send(ACKpkt, address);
+
+          state="Established";
+        }
+        
+        break;
+
+      case "SYN_RCVD":
+        System.out.println("Current state: "+state+"\n");
+
+        try {
+          D.unregisterListeningSocket(localport, this);
+          D.registerConnection(p.sourceAddr, localport, port, this);
+        }
+        catch (Exception e) {
+          System.out.println(e);
+        }
+
+        if (p.ackFlag && !p.synFlag){
+          state="Established";
+        }
+
+        break;
+
+      default:
+        break;
+    }
   }
   
-  /** 
+  /** CPPacket(port, localport,0, 0, false, true, false, 0, null);
    * Waits for an incoming connection to arrive to connect this socket to
    * Ultimately this is called by the application calling 
    * ServerSocket.accept(), but this method belongs to the Socket object 
@@ -59,7 +116,7 @@ class StudentSocketImpl extends BaseSocketImpl {
    * Note that localport is already set prior to this being called.
    */
   public synchronized void acceptConnection() throws IOException {
-  	serverConnecting = true;
+    state = "Listen";
 
     D.registerListeningSocket(localport, this);
   }
