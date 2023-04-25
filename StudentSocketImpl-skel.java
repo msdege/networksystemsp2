@@ -11,12 +11,13 @@ class StudentSocketImpl extends BaseSocketImpl {
 
   private Demultiplexer D;
   private Timer tcpTimer;
-
-  private String state = "CLOSED";
+  private int ackNum;
+  private int seqNum;
 
   private String[] possibleStates = {"CLOSED", "SYN_SENT", "LISTEN", "SYN_RCVD", "ESTABLISHED",
     "FIN_WAIT_1", "CLOSE_WAIT", "FIN_WAIT_2", "LAST_ACK", "CLOSING", "TIME_WAIT"}; // for reference 
 
+  private String state = possibleStates[0];
 
   StudentSocketImpl(Demultiplexer D) {  // default constructor
     this.D = D;
@@ -37,7 +38,7 @@ class StudentSocketImpl extends BaseSocketImpl {
 
     D.registerConnection(address, localport, port, this);
 
-    TCPPacket SYNpkt = new TCPPacket(localport, port,0, 0, false, true, false, 0, null);
+    TCPPacket SYNpkt = new TCPPacket(localport, port, 10, 1, false, true, false, 1, null);
     TCPWrapper.send(SYNpkt, address);
 
     changeState("CLOSED", "SYN_SENT");
@@ -61,16 +62,13 @@ class StudentSocketImpl extends BaseSocketImpl {
    *  Add the case statement for LISTEN and have it send a SYN+ACK when it receives a SYN. 
    */
   public synchronized void receivePacket(TCPPacket p){
-  	System.out.println("Packet Received: "+p.toString());
-    
-    int seqNum;
-    int ackNum;
+  	System.out.println("Packet Received: " + p.toString());
 
     switch (state) {
       case "LISTEN":
 
         port = p.sourcePort;
-        seqNum = p.ackNum;
+        seqNum = p.ackNum; 
         ackNum = p.seqNum + 1;
 
         if (!p.synFlag || p.ackFlag) {
@@ -85,7 +83,7 @@ class StudentSocketImpl extends BaseSocketImpl {
           System.out.println(e);
         }
 
-        TCPPacket SYNACKpkt = new TCPPacket(localport, port,seqNum, ackNum, true, true, false, 0, null);
+        TCPPacket SYNACKpkt = new TCPPacket(localport, port, seqNum, ackNum, true, true, false, 0, null);
         TCPWrapper.send(SYNACKpkt, p.sourceAddr);
 
         changeState("LISTEN", "SYN_RCVD");
@@ -94,11 +92,8 @@ class StudentSocketImpl extends BaseSocketImpl {
     
       case "SYN_SENT":
 
-        seqNum = p.ackNum;
-        ackNum = p.seqNum + 1;
-
         if (p.ackFlag && p.synFlag){
-          TCPPacket ACKpkt = new TCPPacket(localport, port, seqNum, ackNum, true, false, false, 0, null);
+          TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
           TCPWrapper.send(ACKpkt, address);
 
           changeState("SYN_SENT", "ESTABLISHED");
@@ -116,6 +111,43 @@ class StudentSocketImpl extends BaseSocketImpl {
 
       case "ESTABLISHED":
         // if close() --> FIN_WAIT_1    if FIN received --> CLOSE_WAIT
+        if (p.finFlag) {
+          TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
+          TCPWrapper.send(ACKpkt, address);
+
+          changeState("ESTABLISHED", "CLOSE_WAIT");
+        }
+        break;
+
+      case "FIN_WAIT_1":
+        if (p.ackFlag && !p.synFlag && !p.finFlag){
+          changeState("FIN_WAIT_1", "FIN_WAIT_2");
+        }
+        break;
+
+      case "FIN_WAIT_2":
+        if (p.finFlag && !p.synFlag && !p.ackFlag){
+          TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
+          TCPWrapper.send(ACKpkt, address);
+
+          changeState("FIN_WAIT_2", "TIME_WAIT");
+        }
+        break;
+
+      case "CLOSE_WAIT":
+        System.out.println("WE SHOULD NOT BE HERE!!!");
+        break;
+      
+      case "LAST_ACK":
+        if (p.ackFlag && !p.synFlag && !p.finFlag) {
+          changeState("LAST_ACK", "TIME_WAIT");
+        }
+        break;
+      
+      case "CLOSING":
+        break;
+
+      case "TIME_WAIT":
         break;
 
       default:
@@ -136,7 +168,7 @@ class StudentSocketImpl extends BaseSocketImpl {
     changeState("CLOSED", "LISTEN");
     D.registerListeningSocket(localport, this);
 
-    while(state != "ESTABLISHED" || state != "SYN_RCVD"){
+    while(state != "ESTABLISHED" && state != "SYN_RCVD"){
       try{
         wait();
       }
@@ -181,10 +213,27 @@ class StudentSocketImpl extends BaseSocketImpl {
 
   /**
    * Closes this socket. 
+   * 
+   * In other words, your close() method just does the state change and sends a fin. 
+   * Then close() returns immediately, without waiting for the real close of the connection; 
+   * all the other things should be done in the background, not by close() method directly.
    *
    * @exception  IOException  if an I/O error occurs when closing this socket.
    */
   public synchronized void close() throws IOException {
+      seqNum = ackNum; 
+      ackNum = seqNum + 1;
+
+      if (state == "ESTABLISHED"){
+        changeState("ESTABLISHED", "FIN_WAIT_1");
+      }
+      else if (state == "CLOSE_WAIT"){
+        changeState("CLOSE_WAIT", "LAST_ACK");
+      }
+
+      TCPPacket FINpkt = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 0, null);
+      TCPWrapper.send(FINpkt, address);
+
   }
 
   /** 
