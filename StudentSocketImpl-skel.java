@@ -12,7 +12,10 @@ class StudentSocketImpl extends BaseSocketImpl {
   private Demultiplexer D;
   private Timer tcpTimer;
 
-  private String state = "Closed";
+  private String state = "CLOSED";
+
+  private String[] possibleStates = {"CLOSED", "SYN_SENT", "LISTEN", "SYN_RCVD", "ESTABLISHED",
+    "FIN_WAIT_1", "CLOSE_WAIT", "FIN_WAIT_2", "LAST_ACK", "CLOSING", "TIME_WAIT"}; // for reference 
 
 
   StudentSocketImpl(Demultiplexer D) {  // default constructor
@@ -38,7 +41,7 @@ class StudentSocketImpl extends BaseSocketImpl {
     TCPWrapper.send(SYNpkt, address);
 
     System.out.println("Client connect call\n");
-    state = "SYN_SENT";
+    changeState("CLOSED", "SYN_SENT");
 
   }
   
@@ -59,28 +62,29 @@ class StudentSocketImpl extends BaseSocketImpl {
     this.notifyAll();
 
     switch (state) {
-      case "Listen":
+      case "LISTEN":
         System.out.println("Current state: "+state+"\n");
 
         seqNum = p.ackNum;
         ackNum = p.seqNum + 1;
 
-        if (p.synFlag && !p.ackFlag) {
+        if (!p.synFlag || p.ackFlag) {
+          break;
+        }
           
-          try {
-            D.unregisterListeningSocket(localport, this);
-            D.registerConnection(p.sourceAddr, localport, port, this);
-          }
-          catch (Exception e) {
-            System.out.println(e);
-          }
-
-          TCPPacket SYNACKpkt = new TCPPacket(port, localport,seqNum, ackNum, true, true, false, 0, null);
-          TCPWrapper.send(SYNACKpkt, address);
-
-          state="SYN_RCVD";
+        try {
+          D.unregisterListeningSocket(localport, this);
+          D.registerConnection(p.sourceAddr, localport, port, this);
+        }
+        catch (Exception e) {
+          System.out.println(e);
         }
 
+        TCPPacket SYNACKpkt = new TCPPacket(port, localport,seqNum, ackNum, true, true, false, 0, null);
+        TCPWrapper.send(SYNACKpkt, address);
+
+        changeState("LISTEN", "SYN_RCVD");
+      
         break;
     
       case "SYN_SENT":
@@ -93,7 +97,7 @@ class StudentSocketImpl extends BaseSocketImpl {
           TCPPacket ACKpkt = new TCPPacket(port, localport,seqNum, ackNum, true, false, false, 0, null);
           TCPWrapper.send(ACKpkt, address);
 
-          state="Established";
+          changeState("SYN_SENT", "ESTABLISHED");
         }
         
         break;
@@ -102,7 +106,7 @@ class StudentSocketImpl extends BaseSocketImpl {
         System.out.println("Current state: "+state+"\n");
 
         if (p.ackFlag && !p.synFlag){
-          state="Established";
+          changeState("SYN_RCVD", "ESTABLISHED");
         }
 
         break;
@@ -189,5 +193,10 @@ class StudentSocketImpl extends BaseSocketImpl {
     // this must run only once the last timer (30 second timer) has expired
     tcpTimer.cancel();
     tcpTimer = null;
+  }
+
+  private void changeState(String initial, String next) {
+    System.out.println("STATE CHANGE: " + initial + "-->" + next);
+    state = next;
   }
 }
