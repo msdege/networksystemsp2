@@ -78,6 +78,8 @@ class StudentSocketImpl extends BaseSocketImpl {
         try {
           D.unregisterListeningSocket(localport, this);
           D.registerConnection(p.sourceAddr, localport, port, this);
+  
+          this.address = p.sourceAddr; //update server's remote host (i.e., client) addr
         }
         catch (Exception e) {
           System.out.println(e);
@@ -91,6 +93,10 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
     
       case "SYN_SENT":
+
+        port = p.sourcePort;
+        seqNum = p.ackNum; 
+        ackNum = p.seqNum + 1;
 
         if (p.ackFlag && p.synFlag){
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
@@ -110,9 +116,14 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
 
       case "ESTABLISHED":
+        port = p.sourcePort;
+        seqNum = p.ackNum; 
+        ackNum = p.seqNum + 1;
+
         // if close() --> FIN_WAIT_1    if FIN received --> CLOSE_WAIT
-        if (p.finFlag) {
+        if (p.finFlag && !p.synFlag && !p.ackFlag) {
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
+          System.out.println("printing in receive packet");
           TCPWrapper.send(ACKpkt, address);
 
           changeState("ESTABLISHED", "CLOSE_WAIT");
@@ -120,18 +131,37 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
 
       case "FIN_WAIT_1":
+
         if (p.ackFlag && !p.synFlag && !p.finFlag){
           changeState("FIN_WAIT_1", "FIN_WAIT_2");
+        }
+
+        else if (p.finFlag && !p.synFlag && !p.ackFlag){
+          port = p.sourcePort;
+          seqNum = p.ackNum; 
+          ackNum = p.seqNum + 1;
+
+          TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
+          TCPWrapper.send(ACKpkt, address);
+          changeState("FIN_WAIT_1","CLOSING");
+
         }
         break;
 
       case "FIN_WAIT_2":
+        System.out.println("in finwait2");
+        
+        port = p.sourcePort;
+        seqNum = p.ackNum; 
+        ackNum = p.seqNum + 1;
+
         if (p.finFlag && !p.synFlag && !p.ackFlag){
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 0, null);
           TCPWrapper.send(ACKpkt, address);
 
           changeState("FIN_WAIT_2", "TIME_WAIT");
         }
+        
         break;
 
       case "CLOSE_WAIT":
@@ -145,6 +175,9 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
       
       case "CLOSING":
+        if (p.ackFlag && !p.synFlag && !p.finFlag) {
+          changeState("LAST_ACK", "TIME_WAIT");
+        }
         break;
 
       case "TIME_WAIT":
@@ -225,6 +258,7 @@ class StudentSocketImpl extends BaseSocketImpl {
       ackNum = seqNum + 1;
 
       if (state == "ESTABLISHED"){
+        System.out.println("server close has been called");
         changeState("ESTABLISHED", "FIN_WAIT_1");
       }
       else if (state == "CLOSE_WAIT"){
