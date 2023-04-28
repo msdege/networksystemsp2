@@ -117,18 +117,20 @@ class StudentSocketImpl extends BaseSocketImpl {
       case "SYN_RCVD":
 
         if (p.ackFlag && !p.synFlag){
+          port = p.sourcePort;
           changeState("SYN_RCVD", "ESTABLISHED");
         }
 
         break;
 
       case "ESTABLISHED":
-        port = p.sourcePort;
-        seqNum = p.ackNum;
-        ackNum = p.seqNum + 1;
-
         // if close() --> FIN_WAIT_1    if FIN received --> CLOSE_WAIT
         if (p.finFlag && !p.synFlag && !p.ackFlag) {
+
+          port = p.sourcePort;
+          seqNum = p.ackNum;
+          ackNum = p.seqNum + 1;
+
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
           TCPWrapper.send(ACKpkt, address);
 
@@ -159,16 +161,18 @@ class StudentSocketImpl extends BaseSocketImpl {
       case "FIN_WAIT_2":
         System.out.println("in finwait2");
 
-        port = p.sourcePort;
-        seqNum = p.ackNum;
-        ackNum = p.seqNum + 1;
-
         if (p.finFlag && !p.synFlag && !p.ackFlag){
+          port = p.sourcePort;
+          seqNum = p.ackNum;
+          ackNum = p.seqNum + 1;
+
 
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
           TCPWrapper.send(ACKpkt, address);
 
           changeState("FIN_WAIT_2", "TIME_WAIT");
+
+          createTimerTask(30000, null); // wait 30 seconds
         }
 
         break;
@@ -180,12 +184,16 @@ class StudentSocketImpl extends BaseSocketImpl {
       case "LAST_ACK":
         if (p.ackFlag && !p.synFlag && !p.finFlag) {
           changeState("LAST_ACK", "TIME_WAIT");
+
+          createTimerTask(30*1000, null); // 30 sec wait
         }
         break;
 
       case "CLOSING":
         if (p.ackFlag && !p.synFlag && !p.finFlag) {
           changeState("CLOSING", "TIME_WAIT");
+
+          createTimerTask(30*1000, null); // 30 sec wait
         }
         break;
 
@@ -284,7 +292,11 @@ class StudentSocketImpl extends BaseSocketImpl {
 
       changeState("CLOSE_WAIT", "LAST_ACK");
     }
-    else {System.out.println("Close is called when not in appropriate state." + state);}
+    else {
+      System.out.println("Close is called when not in appropriate state." + state);
+      TCPPacket FINpkt = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
+      TCPWrapper.send(FINpkt, address);
+    }
 
   }
 
@@ -315,9 +327,5 @@ class StudentSocketImpl extends BaseSocketImpl {
   private void changeState(String initial, String next) {
     System.out.println("!!! " + initial + "->" + next);
     state = next;
-
-    if (initial.equals("TIME_WAIT")) {
-      createTimerTask(30000, null);
-    }
   }
 }
