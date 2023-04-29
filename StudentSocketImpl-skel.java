@@ -122,7 +122,12 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
 
       case "SYN_RCVD":
-
+        
+        // If we receive a SYN in this state, we dropped the SYN+ACK, so resend it.
+        if (!p.ackFlag && p.synFlag)
+          sendPkt(lastPkt, address);
+        
+        // Normal procedure
         if (p.ackFlag && !p.synFlag){
           port = p.sourcePort;
           
@@ -135,6 +140,12 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
 
       case "ESTABLISHED":
+
+        // If we receive a SYN+ACK here, then the last ACK was dropped, so resend it.
+        if (p.ackFlag && p.synFlag) {
+          sendPkt(lastACKpkt, address);
+        }
+
         // if close() --> FIN_WAIT_1    if FIN received --> CLOSE_WAIT
         if (p.finFlag && !p.synFlag && !p.ackFlag) {
 
@@ -175,21 +186,21 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
 
       case "FIN_WAIT_2":
-        System.out.println("in finwait2");
+        
 
-        if (p.finFlag && !p.synFlag && !p.ackFlag){
+        if (p.finFlag){
+          
           port = p.sourcePort;
           seqNum = p.ackNum;
           ackNum = p.seqNum + 1;
 
+          changeState("FIN_WAIT_2", "TIME_WAIT");
 
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
           // TCPWrapper.send(ACKpkt, address);
           sendPkt(ACKpkt, address);
 
-          changeState("FIN_WAIT_2", "TIME_WAIT");
-
-          createTimerTask(30000, null); // wait 30 seconds
+          createTimerTask(30*1000, null); // wait 30 seconds
         }
 
         break;
@@ -298,15 +309,29 @@ class StudentSocketImpl extends BaseSocketImpl {
     seqNum = ackNum;
     ackNum = seqNum + 1;
 
+    System.out.println(thisIsServer + " " + thisIsClient);
+
     if (thisIsClient) {
       System.out.println("Client close: ");
+    }
       
     if (thisIsServer) {
       System.out.println("Server close: ");
-      createTimerTask(7000, null).run();}
-    }
 
-    if (state == "ESTABLISHED"){
+      while (state != "CLOSE_WAIT"){
+        try {
+          wait();
+        }
+        catch (InterruptedException e){
+          System.out.println(e);
+        }
+      }
+    }
+    
+
+    if (state == "ESTABLISHED" && thisIsClient){
+
+      //createTimerTask(7000, null).run();
 
       TCPPacket FINpkt = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
       // TCPWrapper.send(FINpkt, address);
@@ -370,8 +395,9 @@ class StudentSocketImpl extends BaseSocketImpl {
 		}
 		
 		//No retransmission for ACKs
-		else
+		else {
 			lastACKpkt = pkt;
+    }
 	}
 
   private void changeState(String initial, String next) {
