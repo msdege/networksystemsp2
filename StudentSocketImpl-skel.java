@@ -4,10 +4,24 @@ import java.util.Timer;
 
 class StudentSocketImpl extends BaseSocketImpl {
 
-  // SocketImpl data members:
-  //   protected InetAddress address;
-  //   protected int port;
-  //   protected int localport;
+  /**
+   * *****IMPORTANT, PLEASE READ*****
+   * 
+   * ---Limitations of our code---
+   * Our code gets through steps 1-3 perfectly and step 4 consistently. We have run into an issue
+   * where step 4 does not get to the TIME_WAIT state every time, but this seems to be a random
+   * timing issue with the machines rather than our implementation. For step 5, we have
+   * implemented the proper logic within all of the switch statements in receivePacket(), but 
+   * unfortuantely the code does not consistently work with a loss rate greater than 0.20.
+   * 
+   * The attempt to handle packet loss is designated in each of the switch statements by an
+   * alternative conditional. The normal procedure in the case of no packet loss is designated
+   * by "Normal procedure" above the conditonal.
+   * 
+   * For the transition from TIME_WAIT to CLOSED, we implemented logic within the handleTimer()
+   * method, but our code exits before this is able to occur. Perhaps a thread waiting clause would
+   * fix this. 
+   */
 
   private Demultiplexer D;
   private Timer tcpTimer;
@@ -44,7 +58,6 @@ class StudentSocketImpl extends BaseSocketImpl {
     D.registerConnection(address, localport, port, this);
 
     TCPPacket SYNpkt = new TCPPacket(localport, port, 10, 1, false, true, false, 1, null);
-    //TCPWrapper.send(SYNpkt, address);
     sendPkt(SYNpkt, address);
 
     changeState("CLOSED", "SYN_SENT");
@@ -68,12 +81,11 @@ class StudentSocketImpl extends BaseSocketImpl {
    *  Add the case statement for LISTEN and have it send a SYN+ACK when it receives a SYN.
    */
   public synchronized void receivePacket(TCPPacket p){
-    //System.out.println("Packet Received: " + p.toString());
-    //if (p.finFlag) {System.out.println("Its a fin!");}
 
     switch (state) {
       case "LISTEN":
 
+        // Break if we do not receive the proper packet
         if (!p.synFlag || p.ackFlag) {
           break;
         }
@@ -85,7 +97,6 @@ class StudentSocketImpl extends BaseSocketImpl {
         try {
           D.unregisterListeningSocket(localport, this);
           D.registerConnection(p.sourceAddr, p.destPort, p.sourcePort, this);
-          //D.registerConnection(p.sourceAddr, localport, port, this);
 
           this.address = p.sourceAddr; //update server's remote host (i.e., client addr)
           this.port = p.sourcePort;
@@ -95,7 +106,6 @@ class StudentSocketImpl extends BaseSocketImpl {
         }
 
         TCPPacket SYNACKpkt = new TCPPacket(localport, port, seqNum, ackNum, true, true, false, 1, null);
-        //TCPWrapper.send(SYNACKpkt, p.sourceAddr);
         sendPkt(SYNACKpkt, address);
 
         changeState("LISTEN", "SYN_RCVD");
@@ -104,6 +114,7 @@ class StudentSocketImpl extends BaseSocketImpl {
 
       case "SYN_SENT":
 
+        // Normal procedure
         if (p.ackFlag && p.synFlag){
           port = p.sourcePort;
           seqNum = p.ackNum;
@@ -113,7 +124,6 @@ class StudentSocketImpl extends BaseSocketImpl {
 			    tcpTimer = null;
 
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
-          //TCPWrapper.send(ACKpkt, address);
           sendPkt(ACKpkt, address);
 
           changeState("SYN_SENT", "ESTABLISHED");
@@ -128,7 +138,7 @@ class StudentSocketImpl extends BaseSocketImpl {
           sendPkt(lastPkt, address);
         
         // Normal procedure
-        if (p.ackFlag && !p.synFlag){
+        else if (p.ackFlag && !p.synFlag){
           port = p.sourcePort;
           
           tcpTimer.cancel(); //cancel timer for sent SYN+ACK
@@ -146,30 +156,41 @@ class StudentSocketImpl extends BaseSocketImpl {
           sendPkt(lastACKpkt, address);
         }
 
+        // Normal Procedure
         // if close() --> FIN_WAIT_1    if FIN received --> CLOSE_WAIT
-        if (p.finFlag && !p.synFlag && !p.ackFlag) {
+        else if (p.finFlag && !p.synFlag && !p.ackFlag) {
 
           port = p.sourcePort;
           seqNum = p.ackNum;
           ackNum = p.seqNum + 1;
 
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
-          // TCPWrapper.send(ACKpkt, address);
           sendPkt(ACKpkt, address);
 
           changeState("ESTABLISHED", "CLOSE_WAIT");
         }
+
         break;
 
       case "FIN_WAIT_1":
 
-        if (p.ackFlag && !p.synFlag && !p.finFlag){
-          changeState("FIN_WAIT_1", "FIN_WAIT_2");
+        if (p.ackFlag){
 
-          tcpTimer.cancel(); //Cancel timer for the fin being acked
-				  tcpTimer = null;
+          // Retransmit the latest ACK if we receive a SYN+ACK
+          if (p.synFlag) {
+            sendPkt(lastACKpkt, address);
+          }
+
+          //Normal Procedure
+          else{
+            changeState("FIN_WAIT_1", "FIN_WAIT_2");
+
+            tcpTimer.cancel(); //Cancel timer for the fin being acked
+				    tcpTimer = null;
+          }
         }
 
+        // Normal Procedure
         else if (p.finFlag && !p.synFlag && !p.ackFlag){
           port = p.sourcePort;
           seqNum = p.ackNum;
@@ -177,7 +198,6 @@ class StudentSocketImpl extends BaseSocketImpl {
 
 
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
-          // TCPWrapper.send(ACKpkt, address);
           sendPkt(ACKpkt, address);
 
           changeState("FIN_WAIT_1","CLOSING");
@@ -197,7 +217,6 @@ class StudentSocketImpl extends BaseSocketImpl {
           changeState("FIN_WAIT_2", "TIME_WAIT");
 
           TCPPacket ACKpkt = new TCPPacket(localport, port, -2, p.ackNum, true, false, false, 1, null);
-          // TCPWrapper.send(ACKpkt, address);
           sendPkt(ACKpkt, address);
 
           createTimerTask(30*1000, null); // wait 30 seconds
@@ -206,10 +225,16 @@ class StudentSocketImpl extends BaseSocketImpl {
         break;
 
       case "CLOSE_WAIT":
-        System.out.println("WE SHOULD NOT BE HERE!!!");
+        
+        // Retransmit latest ACK if we receive a fin
+        if (p.finFlag){
+          sendPkt(lastACKpkt, address);       
+        }
         break;
 
       case "LAST_ACK":
+
+        // Normal Procedure
         if (p.ackFlag && !p.synFlag && !p.finFlag) {
           tcpTimer.cancel(); //cancel timer for previously sent fin
 				  tcpTimer = null;
@@ -218,9 +243,17 @@ class StudentSocketImpl extends BaseSocketImpl {
 
           createTimerTask(30*1000, null); // 30 sec wait
         }
+
+        // Retransmit latest ACK if we receive a fin in this state
+        if (p.finFlag) {
+          sendPkt(lastACKpkt, address);
+        }
+
         break;
 
       case "CLOSING":
+
+        // Normal Procedure
         if (p.ackFlag && !p.synFlag && !p.finFlag) {
           tcpTimer.cancel(); //Cancel timer for sent fin
 				  tcpTimer = null;
@@ -229,9 +262,21 @@ class StudentSocketImpl extends BaseSocketImpl {
 
           createTimerTask(30*1000, null); // 30 sec wait
         }
+
+        // Retransmit latest ACK if we receive a fin in this state
+        else if (p.finFlag){
+          sendPkt(lastACKpkt, address);
+        }
+
         break;
 
       case "TIME_WAIT":
+        
+        // Retransmit latest ACK if we receive a fin in this state
+        if (p.finFlag) {
+          sendPkt(lastACKpkt, address);
+        }
+
         break;
 
       default:
@@ -309,14 +354,8 @@ class StudentSocketImpl extends BaseSocketImpl {
     seqNum = ackNum;
     ackNum = seqNum + 1;
 
-    //System.out.println(thisIsServer + " " + thisIsClient);
-
-    if (thisIsClient) {
-      System.out.println("Client close: ");
-    }
-      
+    // Wait for server's state to change before dealing with the close call
     if (thisIsServer) {
-      System.out.println("Server close: ");
 
       while (state != "CLOSE_WAIT"){
         try {
@@ -329,12 +368,9 @@ class StudentSocketImpl extends BaseSocketImpl {
     }
     
 
-    if (state == "ESTABLISHED" && thisIsClient){
-
-      //createTimerTask(7000, null).run();
+    if (state == "ESTABLISHED"){
 
       TCPPacket FINpkt = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
-      // TCPWrapper.send(FINpkt, address);
       sendPkt(FINpkt, address);
 
       changeState("ESTABLISHED", "FIN_WAIT_1");
@@ -342,15 +378,9 @@ class StudentSocketImpl extends BaseSocketImpl {
     else if (state == "CLOSE_WAIT"){
 
       TCPPacket FINpkt = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
-      // TCPWrapper.send(FINpkt, address);
       sendPkt(FINpkt, address);
 
       changeState("CLOSE_WAIT", "LAST_ACK");
-    }
-    else {
-      System.out.println("Close is called when not in appropriate state." + state);
-      //TCPPacket FINpkt = new TCPPacket(localport, port, seqNum, ackNum, false, false, true, 1, null);
-      //TCPWrapper.send(FINpkt, address);
     }
 
   }
@@ -377,6 +407,26 @@ class StudentSocketImpl extends BaseSocketImpl {
     // this must run only once the last timer (30 second timer) has expired
     tcpTimer.cancel();
     tcpTimer = null;
+
+    // Change to CLOSED state, this does not always work
+    if(state == "TIME_WAIT"){
+      try {
+        changeState("TIME_WAIT", "CLOSED");    
+      } 
+      catch (Exception e) {
+        notifyAll();
+      }
+
+      notifyAll(); 
+
+      // Unregister the connection
+      try {
+           D.unregisterConnection(address, localport, port, this);
+      } 
+      catch (Exception e) {
+        e.printStackTrace();
+      }
+    }
   }
 
   /**
@@ -388,7 +438,7 @@ class StudentSocketImpl extends BaseSocketImpl {
 	private void sendPkt(TCPPacket pkt, InetAddress addr){
 		TCPWrapper.send(pkt, addr);
 		
-		//For FINs, ACKs, and SYN+ACKs, send the packet and start a retransmission timer.
+		//For FINs and SYN+ACKs, send the packet and start a retransmission timer.
 		if (!pkt.ackFlag || pkt.synFlag){
 			lastPkt = pkt;
 			createTimerTask(1000, null);
