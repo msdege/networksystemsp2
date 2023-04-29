@@ -69,7 +69,7 @@ class StudentSocketImpl extends BaseSocketImpl {
    */
   public synchronized void receivePacket(TCPPacket p){
     //System.out.println("Packet Received: " + p.toString());
-    if (p.finFlag) {System.out.println("Its a fin!");}
+    //if (p.finFlag) {System.out.println("Its a fin!");}
 
     switch (state) {
       case "LISTEN":
@@ -309,7 +309,7 @@ class StudentSocketImpl extends BaseSocketImpl {
     seqNum = ackNum;
     ackNum = seqNum + 1;
 
-    System.out.println(thisIsServer + " " + thisIsClient);
+    //System.out.println(thisIsServer + " " + thisIsClient);
 
     if (thisIsClient) {
       System.out.println("Client close: ");
